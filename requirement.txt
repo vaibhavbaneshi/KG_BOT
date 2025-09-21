@@ -16,7 +16,7 @@ tiktoken==0.7.0
 
 # Web inputs
 requests==2.32.3
-beautifulsoup4==4.12.3
+beautifulsoup4
 
 # Neo4j (optional)
 neo4j
