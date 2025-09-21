@@ -16,7 +16,9 @@ tiktoken==0.7.0
 
 # Web inputs
 requests==2.32.3
-beautifulsoup4
+beautifulsoup4==4.12.3
+lxml
+html5lib
 
 # Neo4j (optional)
 neo4j
@@ -26,8 +28,5 @@ langchain-neo4j
 https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
 matplotlib
-
 certifi
-
 apscheduler
-scheduler
