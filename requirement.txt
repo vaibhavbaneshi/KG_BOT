@@ -1,0 +1,33 @@
+streamlit==1.38.0
+python-dotenv==1.0.1
+loguru==0.7.2
+
+# LangChain core (future tools)
+langchain
+langchain-community
+langchain-groq==0.2.0
+langchain-experimental==0.3.2
+
+# KG / NLP
+spacy==3.7.4
+networkx==3.3
+pyvis==0.3.2
+tiktoken==0.7.0
+
+# Web inputs
+requests==2.32.3
+beautifulsoup4==4.12.3
+
+# Neo4j (optional)
+neo4j
+langchain-neo4j
+
+# Install spaCy model at build time
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+
+matplotlib
+
+certifi
+
+apscheduler
+scheduler
