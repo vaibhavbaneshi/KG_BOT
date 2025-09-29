@@ -3,6 +3,7 @@ import re
 from utils.logger import logger
 from services.text_extractor import extract_text_from_file, extract_text_from_url
 from services.kg_service import kg_service
+import pandas as pd
 kg = kg_service()
 
 from neo4j import GraphDatabase

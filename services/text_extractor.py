@@ -4,6 +4,8 @@ import logging
 from bs4 import BeautifulSoup
 import certifi
 import streamlit as st
+import pandas as pd
+import certifi
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,9 @@ def extract_text_from_file(uploaded_file, max_length=3000):
 
 def extract_text_from_url(url, max_length=3000):
     """
-    Extract text from a URL and return as a list of chunks.
+    Extract text from a URL (HTML or CSV) and return as a list of chunks.
+    - If HTML: grab text from <p> tags
+    - If CSV: read via pandas and flatten into text
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
@@ -48,9 +52,23 @@ def extract_text_from_url(url, max_length=3000):
             st.warning(f"⚠️ Failed to fetch URL: {url}\nResponse: {r.status_code}")
             return []
 
-        soup = BeautifulSoup(r.text, "html.parser")
-        paragraphs = soup.find_all('p')
-        text = " ".join(p.get_text() for p in paragraphs)
+        content_type = r.headers.get("Content-Type", "")
+
+        text = ""
+
+        if "text/html" in content_type:  # Handle HTML
+            soup = BeautifulSoup(r.text, "html.parser")
+            paragraphs = soup.find_all("p")
+            text = " ".join(p.get_text() for p in paragraphs)
+
+        elif "text/csv" in content_type or url.endswith(".csv"):  # Handle CSV
+            df = pd.read_csv(url)
+            # Convert dataframe to text (you can format this better if needed)
+            text = df.to_csv(index=False)
+
+        else:  # Fallback for plain text or unknown content
+            text = r.text
+
         return chunk_text(text, max_length)
 
     except Exception as e:

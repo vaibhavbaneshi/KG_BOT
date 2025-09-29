@@ -108,39 +108,35 @@ class kg_service:
                     Schema:
                     (:ENTITY {{name}})-[:RELATION]->(:ENTITY {{name}})
                     Nodes only have the `name` property.
-                    All information (dates, facts, relationships) is stored as edges where possible.
-                    If some information is stored as a property (like a date, value, or numeric fact), query the node's property instead.
+                    All facts are stored as relationships wherever possible.
 
-                    Important Notes:
-                    - Questions may use different terms for the same relationship (e.g., "birthplace", "where born", "birth location" → BORN_IN).
-                    - Questions about occupation, job, profession, etc. should map to relationships like PROFESSION.
-                    - Questions about dates like "founded", "born", etc. may be stored as relationships or properties.
-                    - Always interpret the meaning of the question and map it to the correct relationship or property.
-                    - Even if the phrasing is unclear, generate a valid query based on the best possible interpretation.
+                    Important Rules:
+                    - Direction matters! 
+                    * :ACTED_IN → goes from an ACTOR entity → MOVIE entity.
+                    * :DIRECTED → goes from a DIRECTOR entity → MOVIE entity.
+                    * :PROFESSION → goes from PERSON entity → PROFESSION entity.
+                    * :BORN_IN → goes from PERSON entity → LOCATION entity.
+                    - When asking "Who acted in <movie>?" the query must start from the ACTOR node connected via `-[:ACTED_IN]->` to the movie.
+                    - When asking "Which movies did <actor> act in?" the query must start from the ACTOR node and follow `-[:ACTED_IN]->` to the MOVIE.
+                    - Questions may use different terms for the same relationship (e.g., "birthplace" → BORN_IN, "job" → PROFESSION).
+                    - Always interpret the intent of the question and map to the correct relationship and direction.
 
-                    Use MATCH ... RETURN ... style queries.
-                    Always alias return values (e.g., d.name AS result).
+                    Use `MATCH ... RETURN ...` queries.
+                    Always alias return values (e.g., `AS result`).
 
                     Examples:
-                    Q: When was Elon Reeve Musk born?
-                    A: MATCH (m:ENTITY {{name:"Elon Reeve Musk"}})-[:BORN]->(d:ENTITY) RETURN d.name AS result
+                    Q: Who acted in Screamers?
+                    A: MATCH (a:ENTITY)-[:ACTED_IN]->(m:ENTITY {{name:"Screamers"}}) RETURN a.name AS result
 
-                    Q: Who are Elon Musk's parents?
-                    A: MATCH (m:ENTITY {{name:"Elon Reeve Musk"}})-[:PARENT]->(p:ENTITY) RETURN p.name AS result
-
-                    Q: When was Apple Inc. founded?
-                    A: MATCH (f:ENTITY {{name:"Apple Inc."}}) RETURN f.founded AS result
-
-                    Q: What is the occupation of Javed Akhtar?
-                    A: MATCH (j:ENTITY {{name:"Javed Akhtar"}})-[:PROFESSION]->(p:ENTITY) RETURN p.name AS result
+                    Q: What movies did Pamela Adlon act in?
+                    A: MATCH (a:ENTITY {{name:"Pamela Adlon"}})-[:ACTED_IN]->(m:ENTITY) RETURN m.name AS result
 
                     Q: Where was Javed Akhtar born?
                     A: MATCH (j:ENTITY {{name:"Javed Akhtar"}})-[:BORN_IN]->(b:ENTITY) RETURN b.name AS result
 
-                    Now generate ONLY the Cypher query for the following question.
+                    Now generate ONLY the Cypher query for:
                     Question: "{user_question}"
                     """
-
 
             response = llm.invoke(prompt)
             cypher_query = clean_cypher(response.content.strip())
