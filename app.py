@@ -8,7 +8,7 @@ kg = kg_service()
 
 from neo4j import GraphDatabase
 import time
-
+import streamlit.components.v1 as components
 import streamlit as st
 from utils.scheduler import start_scheduler
 
@@ -35,6 +35,18 @@ user_text = ""
 file_input = None
 url_input = ""
 query_kg_flag = False
+# Reset graph if input type changes
+if "last_input_type" not in st.session_state:
+    st.session_state.last_input_type = input_type
+
+if st.session_state.last_input_type != input_type:
+    # Clear graph & KG flags when switching input mode
+    if "graph_html" in st.session_state:
+        del st.session_state["graph_html"]
+    st.session_state.query_kg_flag = False
+    st.session_state.input_valid = False
+    st.session_state.final_chunk = []
+    st.session_state.last_input_type = input_type
 
 if input_type == "Text":
     user_text = st.text_area("✍️ Enter text to build KG:")
@@ -75,6 +87,9 @@ if st.button("✅ Check Input"):
             else:
                 final_chunk = []
 
+        if "graph_html" in st.session_state:
+            del st.session_state["graph_html"]
+            
         full_text = " ".join(final_chunk) 
         if not full_text or is_gibberish(full_text):
             st.session_state.input_valid = False
@@ -102,6 +117,10 @@ if st.session_state.input_valid:
 else:
     st.button("🚀 Build Knowledge Graph", disabled=True)
     st.info("ℹ️ Please check the input first.")
+
+if "graph_html" in st.session_state:
+    # kg.visualize_triples()
+    components.html(st.session_state["graph_html"], height=600, width=1000, scrolling=True)
 
 # Query KG
 if st.session_state.query_kg_flag:

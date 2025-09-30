@@ -2,10 +2,14 @@ from utils.logger import logger
 from utils.llm import llm
 from configs.config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 from utils.text_cleaner import text_cleaner, clean_cypher
+from pyvis.network import Network
+from neo4j import GraphDatabase
 
 import streamlit as st
-from neo4j import GraphDatabase
+import streamlit.components.v1 as components
+import streamlit as st
 import ast
+
 
 class kg_service:
 
@@ -21,18 +25,35 @@ class kg_service:
 
     # ----------------- Helpers -----------------
     def parse_triples(self, raw_triples: str):
-        """Parse triples from LLM response (expects JSON-like list of lists)."""
+        """Parse triples from LLM response (supports optional alias lists)."""
         try:
             triples = ast.literal_eval(raw_triples)
             if isinstance(triples, list):
-                return [tuple(item) for item in triples if len(item) >= 3]
-        except Exception:
-            pass
-        return []
+                clean_triples = []
+                alias_map = {}
+                for item in triples:
+                    if len(item) >= 3:
+                        head, relation, tail = item[:3]
+                        clean_triples.append((head, relation, tail))
+
+                        # if 4th element exists, treat it as alias list
+                        if len(item) == 4 and isinstance(item[3], list):
+                            alias_map[head] = item[3]
+                return clean_triples, alias_map
+        except Exception as e:
+            logger.error(f"⚠️ Failed to parse triples: {e}")
+        return [], {}
+
 
     # ----------------- Insert into Neo4j -----------------
-    def insert_triples(self, triples):
-        """Insert triples as (h)-[:REL]->(t) edges only."""
+    def insert_triples(self, triples, alias_map=None):
+        """
+        Insert triples as (h)-[:REL]->(t) edges only.
+        Optionally, store aliases for entities for more flexible querying.
+        
+        alias_map: dict
+            Example: {"Elon Musk": ["Elon Reeve Musk", "Elon"]}
+        """
         try:
             if not self.driver:
                 st.error("❌ Neo4j driver is not initialized. Check URI/user/pass.")
@@ -46,6 +67,7 @@ class kg_service:
                 for head, relation, tail in triples:
                     safe_rel = text_cleaner(relation).upper().replace(" ", "_")
 
+                    # Merge main entities
                     query = f"""
                         MERGE (h:ENTITY {{name: $head}})
                         MERGE (t:ENTITY {{name: $tail}})
@@ -53,25 +75,41 @@ class kg_service:
                     """
                     session.run(query, head=head, tail=tail)
 
+                    # Add aliases if provided
+                    if alias_map:
+                        for entity, aliases in alias_map.items():
+                            for a in aliases:
+                                alias_query = """
+                                    MATCH (e:ENTITY {name: $entity})
+                                    MERGE (alias:ALIAS {name: $alias})
+                                    MERGE (alias)-[:ALIAS_OF]->(e)
+                                """
+                                session.run(alias_query, entity=entity, alias=a)
+
             st.success(f"✅ Inserted {len(triples)} triples into Neo4j")
-            self.show_all_triples()
+            self.visualize_triples()
 
         except Exception as e:
-            st.error(f"⚠️ Failed to insert triples: {str(e)}")
+            st.error(f"❌ Failed to insert triples: {e}")
 
     # ----------------- Build KG -----------------
     def build_kg(self, user_input: str):
         prompt = f"""
-                Extract knowledge triples strictly in JSON list format:
-                [["Entity1", "RELATION", "Entity2"], ...]
+                Extract knowledge triples strictly in JSON list format, including optional aliases:
+                [["Entity1", "RELATION", "Entity2", ["Alias1", "Alias2", ...]], ...]
 
                 Rules:
-                - Output only a valid Python list of lists. Do not add explanations, notes, or any extra text.
-                - Relation should be short, uppercase, and noun or verb-like.
+                - Output only a valid Python list of lists. Do not add explanations, notes, or extra text.
+                - Each list must contain:
+                    1. Entity1 (title case)
+                    2. Relation (short, uppercase, noun/verb-like)
+                    3. Entity2 (title case or string literal)
+                    4. Optional aliases for Entity1 (list of strings; can be empty if none)
                 - Examples of relations: "BORN_IN", "PROFESSION", "FOUNDED", "KNOWN_FOR", "HEADQUARTERED".
                 - Entity names should be in title case (e.g., "Javed Akhtar", "Apple Inc.").
                 - Entity2 can be a literal value (date, number, string) or another entity.
                 - Format literal values as strings.
+                - Include common variations for aliases, such as first name, last name, or commonly used short names.
                 - If the relation is ambiguous, choose the closest meaningful relation from the examples.
                 - Avoid generic relations like "is" or "has". Use specific relations that describe the fact.
 
@@ -79,62 +117,88 @@ class kg_service:
                 """
 
         response = llm.invoke(prompt)
-        st.write("✅ Raw Response:", response.content)
         raw_triples = response.content.strip()
 
-        triples = self.parse_triples(raw_triples)
-        self.insert_triples(triples)
+        triples, alias_map = self.parse_triples(raw_triples)
+        self.insert_triples(triples, alias_map)
 
-    # ----------------- Show Data -----------------
-    def show_all_triples(self):
+    # ----------------- Data Visualizer -----------------
+    def visualize_triples(self):
         with self.driver.session() as session:
             query = """
             MATCH (h:ENTITY)-[r]->(t:ENTITY)
             RETURN h.name AS head, type(r) AS relation, t.name AS tail
-            LIMIT 3
+            LIMIT 50
             """
             results = session.run(query)
-            triples = [
-                (record["head"], record["relation"], record["tail"]) for record in results
-            ]
-        st.write("📊 Current triples in Neo4j:", triples)
+            triples = [(record["head"], record["relation"], record["tail"]) for record in results]
+
+        # Create Pyvis network
+        net = Network(height="600px", width="100%", bgcolor="#222222", font_color="white", directed=True)
+
+        for h, r, t in triples:
+            net.add_node(h, label=h, title=h)
+            net.add_node(t, label=t, title=t)
+            net.add_edge(h, t, label=r)
+
+        net.set_options("""{
+            "edges": {"color": {"inherit": "from"}},
+            "nodes": {"size": 15}
+        }""")
+
+        # Save HTML into session_state
+        net.save_graph("graph.html")
+        with open("graph.html", "r", encoding="utf-8") as f:
+            st.session_state["graph_html"] = f.read()
+
+        # Render
+        # components.html(st.session_state["graph_html"], height=600, width=1000, scrolling=True)
 
     # ----------------- Query KG -----------------
     def generate_query(self, user_question: str):
         try:
             prompt = f"""
-                    You are an expert in Cypher for Neo4j.
+                    You are an expert in generating Cypher queries for Neo4j.
 
                     Schema:
                     (:ENTITY {{name}})-[:RELATION]->(:ENTITY {{name}})
-                    Nodes only have the `name` property.
-                    All facts are stored as relationships wherever possible.
+                    (:ALIAS {{name}})-[:ALIAS_OF]->(:ENTITY)
+                    - Nodes only have the `name` property.
+                    - All facts are stored as relationships wherever possible.
+                    - Direction matters! The start node is the subject, the end node is the object.
 
-                    Important Rules:
-                    - Direction matters! 
-                    * :ACTED_IN → goes from an ACTOR entity → MOVIE entity.
-                    * :DIRECTED → goes from a DIRECTOR entity → MOVIE entity.
-                    * :PROFESSION → goes from PERSON entity → PROFESSION entity.
-                    * :BORN_IN → goes from PERSON entity → LOCATION entity.
-                    - When asking "Who acted in <movie>?" the query must start from the ACTOR node connected via `-[:ACTED_IN]->` to the movie.
-                    - When asking "Which movies did <actor> act in?" the query must start from the ACTOR node and follow `-[:ACTED_IN]->` to the MOVIE.
-                    - Questions may use different terms for the same relationship (e.g., "birthplace" → BORN_IN, "job" → PROFESSION).
-                    - Always interpret the intent of the question and map to the correct relationship and direction.
+                    Important rules:
+                    1. Always match the relationship direction exactly as it exists in the database.
+                    2. Questions may use different terms for the same relationship. For example:
+                        - "birthplace", "where born", "birth location" → BORN_IN
+                        - "job", "occupation", "profession" → PROFESSION
+                        - "founded", "established" → FOUNDED or FOUNDED_BY
+                    3. If the database stores the full name but the user provides only a partial name (first name, last name, or nickname), first check for a matching ENTITY node with CONTAINS, and if needed check ALIAS nodes. Examples:
+                        - MATCH (p:ENTITY) WHERE p.name CONTAINS "Elon" RETURN p.name AS result
+                        - MATCH (a:ALIAS)-[:ALIAS_OF]->(p:ENTITY) WHERE a.name CONTAINS "Elon" RETURN p.name AS result
+                    4. Family relationships (PARENT, CHILD, SPOUSE, SIBLING) always connect directly between people nodes.
+                    5. Always alias return values as `AS result`.
+                    6. Use the shortest valid query possible while respecting these rules.
+                    7. When generating Cypher queries, always:
+                        - Normalize entity names.
+                        - Replace en dash (–), em dash (—), and minus signs (−) with a standard ASCII hyphen (-).
+                        - Remove unnecessary whitespace.
 
-                    Use `MATCH ... RETURN ...` queries.
-                    Always alias return values (e.g., `AS result`).
 
                     Examples:
-                    Q: Who acted in Screamers?
-                    A: MATCH (a:ENTITY)-[:ACTED_IN]->(m:ENTITY {{name:"Screamers"}}) RETURN a.name AS result
+                    Q: Who founded Apple Inc.?
+                    A: MATCH (a:ENTITY {{name:"Apple Inc."}})-[:FOUNDED_BY]->(f:ENTITY) RETURN f.name AS result
 
-                    Q: What movies did Pamela Adlon act in?
-                    A: MATCH (a:ENTITY {{name:"Pamela Adlon"}})-[:ACTED_IN]->(m:ENTITY) RETURN m.name AS result
+                    Q: Who are Elon Musk's parents?
+                    A: MATCH (p:ENTITY {{name:"Elon Reeve Musk"}})-[:PARENT]->(c:ENTITY) RETURN c.name AS result
 
                     Q: Where was Javed Akhtar born?
                     A: MATCH (j:ENTITY {{name:"Javed Akhtar"}})-[:BORN_IN]->(b:ENTITY) RETURN b.name AS result
 
-                    Now generate ONLY the Cypher query for:
+                    Q: Who acted in Screamers?
+                    A: MATCH (a:ENTITY)-[:ACTED_IN]->(m:ENTITY {{name:"Screamers"}}) RETURN a.name AS result
+
+                    Now generate ONLY the Cypher query for the following question.
                     Question: "{user_question}"
                     """
 
